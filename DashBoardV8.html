@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#020617">
+  <meta charset="UTF-8" />
+  <title>Gestor de projectes Kanban</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js');
+  });
+}
+</script>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+  <div class="max-w-6xl mx-auto py-8 px-4">
+    <header class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+      <div>
+        <h1 class="text-3xl font-bold tracking-tight">Gestor de projectes Kanban</h1>
+        <p class="text-slate-400 text-sm mt-1">
+          Organitza els teus projectes en un tauler Kanban, amb etiquetes i tasques.
+        </p>
+      </div>
+      <div class="flex flex-wrap gap-3">
+        <button id="addProjectBtn"
+          class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-sm font-medium shadow">
+          <span>+ Nou projecte</span>
+        </button>
+        <button id="manageLabelsBtn"
+          class="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-600 hover:border-indigo-400 text-sm font-medium">
+          <span>Gestiona etiquetes</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Placeholder general quan no hi ha cap projecte -->
+    <div id="globalPlaceholder" class="hidden">
+      <div
+        class="border border-dashed border-slate-700 rounded-2xl p-10 flex flex-col items-center justify-center text-center bg-slate-800/60">
+        <div class="text-5xl mb-4">✨</div>
+        <h2 class="text-xl font-semibold mb-2">Comença el teu primer projecte</h2>
+        <p class="text-slate-400 max-w-md mb-4">
+          Crea un projecte, afegeix tasques i mou-les entre columnes per veure com avança la teva feina.
+        </p>
+        <button
+          class="px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-sm font-medium"
+          onclick="openNewProjectModal()">
+          Crear el primer projecte
+        </button>
+      </div>
+    </div>
+
+    <!-- Tauler Kanban -->
+    <main id="board" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <!-- Columna Per fer -->
+      <section data-status="todo"
+        class="rounded-2xl p-3 bg-gradient-to-b from-red-500/40 via-red-600/40 to-red-700/40 border border-red-500/40 flex flex-col min-h-[260px]">
+        <header class="flex items-center justify-between mb-2">
+          <h2 class="font-semibold uppercase text-xs tracking-wide">Per fer</h2>
+          <span class="text-xs text-slate-200 bg-slate-900/40 rounded-full px-2 py-0.5">
+            <span id="count-todo">0</span>
+          </span>
+        </header>
+        <div class="flex-1 space-y-3" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'todo')"
+          id="column-todo"></div>
+        <div id="placeholder-todo" class="mt-3 text-xs text-slate-200/80 italic hidden">
+          Cap projecte aquí encara. Comença per crear-ne un o arrossega’n un a aquesta columna.
+        </div>
+      </section>
+
+      <!-- Columna En procés -->
+      <section data-status="inprogress"
+        class="rounded-2xl p-3 bg-gradient-to-b from-orange-500/40 via-orange-600/40 to-orange-700/40 border border-orange-500/40 flex flex-col min-h-[260px]">
+        <header class="flex items-center justify-between mb-2">
+          <h2 class="font-semibold uppercase text-xs tracking-wide">En procés</h2>
+          <span class="text-xs text-slate-200 bg-slate-900/40 rounded-full px-2 py-0.5">
+            <span id="count-inprogress">0</span>
+          </span>
+        </header>
+        <div class="flex-1 space-y-3" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'inprogress')"
+          id="column-inprogress"></div>
+        <div id="placeholder-inprogress" class="mt-3 text-xs text-slate-200/80 italic hidden">
+          Encara no hi ha res en marxa. Mou algun projecte aquí quan comencis a treballar-hi.
+        </div>
+      </section>
+
+      <!-- Columna Fet -->
+      <section data-status="done"
+        class="rounded-2xl p-3 bg-gradient-to-b from-emerald-500/40 via-emerald-600/40 to-emerald-700/40 border border-emerald-500/40 flex flex-col min-h-[260px]">
+        <header class="flex items-center justify-between mb-2">
+          <h2 class="font-semibold uppercase text-xs tracking-wide">Fet</h2>
+          <span class="text-xs text-slate-200 bg-slate-900/40 rounded-full px-2 py-0.5">
+            <span id="count-done">0</span>
+          </span>
+        </header>
+        <div class="flex-1 space-y-3" ondragover="handleDragOver(event)" ondrop="handleDrop(event, 'done')"
+          id="column-done"></div>
+        <div id="placeholder-done" class="mt-3 text-xs text-slate-200/80 italic hidden">
+          Quan acabis un projecte, arrossega’l aquí i celebra el progrés.
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal projecte i tasques -->
+  <div id="projectModal"
+    class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 hidden">
+    <div class="bg-slate-900 rounded-2xl shadow-xl max-w-xl w-full mx-4 border border-slate-700">
+      <div class="flex items-center justify-between px-5 py-3 border-b border-slate-700">
+        <h3 id="modalTitle" class="font-semibold text-lg">Projecte</h3>
+        <button onclick="closeProjectModal()" class="text-slate-400 hover:text-slate-100 text-xl leading-none">&times;</button>
+      </div>
+      <div class="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+        <div class="space-y-2">
+          <label class="text-xs uppercase tracking-wide text-slate-400">Títol del projecte</label>
+          <input id="projectTitleInput" type="text"
+            class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+
+        <div class="space-y-2">
+          <label class="text-xs uppercase tracking-wide text-slate-400">Descripció</label>
+          <textarea id="projectDescriptionInput" rows="2"
+            class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+        </div>
+
+        <div class="space-y-2">
+          <label class="text-xs uppercase tracking-wide text-slate-400">Etiqueta de projecte</label>
+          <select id="projectLabelSelect"
+            class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </select>
+          <p class="text-[11px] text-slate-500">
+            Pots crear i editar etiquetes amb el botó “Gestiona etiquetes” de la pantalla principal.
+          </p>
+        </div>
+
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <label class="text-xs uppercase tracking-wide text-slate-400">Tasques</label>
+            <span id="taskCount" class="text-[11px] text-slate-400"></span>
+          </div>
+          <div id="tasksList" class="space-y-2"></div>
+          <div class="flex gap-2 mt-2">
+            <input id="newTaskInput" type="text" placeholder="Afegeix una nova tasca..."
+              class="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <button onclick="addTaskFromModal()"
+              class="px-3 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-xs font-medium">
+              Afegir
+            </button>
+          </div>
+          <div id="tasksPlaceholder" class="text-xs text-slate-400 italic mt-1 hidden">
+            Encara no hi ha tasques. Comença afegint la primera acció per aquest projecte.
+          </div>
+        </div>
+      </div>
+      <div class="px-5 py-3 border-t border-slate-700 flex items-center justify-between">
+        <button id="deleteProjectBtn"
+          class="text-xs text-red-400 hover:text-red-300 underline underline-offset-2">
+          Eliminar projecte
+        </button>
+        <div class="flex gap-2">
+          <button onclick="closeProjectModal()"
+            class="px-3 py-1.5 rounded-lg border border-slate-600 text-xs hover:border-slate-400">
+            Cancel·lar
+          </button>
+          <button onclick="saveProjectFromModal()"
+            class="px-4 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-xs font-medium">
+            Desar canvis
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- Dades i LocalStorage ---
+    const STORAGE_KEY_PROJECTS = 'miniKanbanProjects';
+    const STORAGE_KEY_LABELS = 'miniKanbanLabels';
+
+    let projects = [];
+    let labels = [];
+    let currentProjectId = null;
+    let isNewProject = false;
+
+    function loadData() {
+      const storedProjects = localStorage.getItem(STORAGE_KEY_PROJECTS);
+      const storedLabels = localStorage.getItem(STORAGE_KEY_LABELS);
+
+      projects = storedProjects ? JSON.parse(storedProjects) : [];
+      labels = storedLabels ? JSON.parse(storedLabels) : getDefaultLabels();
+
+      if (!storedLabels) {
+        localStorage.setItem(STORAGE_KEY_LABELS, JSON.stringify(labels));
+      }
+    }
+
+    function saveProjects() {
+      localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
+    }
+
+    function saveLabels() {
+      localStorage.setItem(STORAGE_KEY_LABELS, JSON.stringify(labels));
+    }
+
+    function getDefaultLabels() {
+      return [
+        { id: 'general', name: 'General', colorClass: 'bg-slate-700 text-slate-100' },
+        { id: 'educatiu', name: 'Educatiu', colorClass: 'bg-indigo-600 text-white' },
+        { id: 'personal', name: 'Personal', colorClass: 'bg-emerald-600 text-white' }
+      ];
+    }
+
+    // --- Renderitzat del tauler ---
+    function renderBoard() {
+      const columns = {
+        todo: document.getElementById('column-todo'),
+        inprogress: document.getElementById('column-inprogress'),
+        done: document.getElementById('column-done')
+      };
+
+      Object.values(columns).forEach(col => col.innerHTML = '');
+
+      const counts = { todo: 0, inprogress: 0, done: 0 };
+
+      projects.forEach(project => {
+        const card = createProjectCard(project);
+        columns[project.status].appendChild(card);
+        counts[project.status]++;
+      });
+
+      document.getElementById('count-todo').textContent = counts.todo;
+      document.getElementById('count-inprogress').textContent = counts.inprogress;
+      document.getElementById('count-done').textContent = counts.done;
+
+      // Placeholders per columna
+      toggleColumnPlaceholder('todo', counts.todo === 0);
+      toggleColumnPlaceholder('inprogress', counts.inprogress === 0);
+      toggleColumnPlaceholder('done', counts.done === 0);
+
+      // Placeholder global
+      const globalPlaceholder = document.getElementById('globalPlaceholder');
+      globalPlaceholder.classList.toggle('hidden', projects.length !== 0);
+    }
+
+    function toggleColumnPlaceholder(status, show) {
+      const el = document.getElementById(`placeholder-${status}`);
+      if (el) el.classList.toggle('hidden', !show);
+    }
+
+    function createProjectCard(project) {
+      const label = labels.find(l => l.id === project.labelId) || labels[0];
+
+      const card = document.createElement('article');
+      card.className =
+        'rounded-xl bg-slate-900/80 border border-slate-700 hover:border-indigo-400 shadow-sm p-3 cursor-pointer transition transform hover:-translate-y-0.5';
+      card.draggable = true;
+      card.dataset.id = project.id;
+      card.addEventListener('dragstart', handleDragStart);
+      card.addEventListener('click', () => openProjectModal(project.id));
+
+      const title = document.createElement('h3');
+      title.className = 'text-sm font-semibold mb-1 line-clamp-2';
+      title.textContent = project.title || 'Projecte sense títol';
+
+      const desc = document.createElement('p');
+      desc.className = 'text-xs text-slate-400 line-clamp-2 mb-2';
+      desc.textContent = project.description || 'Sense descripció encara. Fes clic per afegir-ne una.';
+
+      const footer = document.createElement('div');
+      footer.className = 'flex items-center justify-between text-[11px]';
+
+      const labelSpan = document.createElement('span');
+      labelSpan.className = `inline-flex items-center px-2 py-0.5 rounded-full ${label.colorClass}`;
+      labelSpan.textContent = label.name;
+
+      const tasksDone = project.tasks.filter(t => t.done).length;
+      const tasksTotal = project.tasks.length;
+      const tasksSpan = document.createElement('span');
+      tasksSpan.className = 'text-slate-400';
+      tasksSpan.textContent = tasksTotal === 0 ? 'Cap tasca' : `${tasksDone}/${tasksTotal} tasques`;
+
+      footer.appendChild(labelSpan);
+      footer.appendChild(tasksSpan);
+
+      card.appendChild(title);
+      card.appendChild(desc);
+      card.appendChild(footer);
+
+      return card;
+    }
+
+    // --- Drag & Drop ---
+    function handleDragStart(e) {
+      e.dataTransfer.setData('text/plain', e.currentTarget.dataset.id);
+      e.dataTransfer.effectAllowed = 'move';
+    }
+
+    function handleDragOver(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    }
+
+    function handleDrop(e, newStatus) {
+      e.preventDefault();
+      const id = e.dataTransfer.getData('text/plain');
+      const project = projects.find(p => p.id === id);
+      if (project) {
+        project.status = newStatus;
+        saveProjects();
+        renderBoard();
+      }
+    }
+
+    // --- Modal de projecte ---
+    const projectModal = document.getElementById('projectModal');
+    const projectTitleInput = document.getElementById('projectTitleInput');
+    const projectDescriptionInput = document.getElementById('projectDescriptionInput');
+    const projectLabelSelect = document.getElementById('projectLabelSelect');
+    const tasksList = document.getElementById('tasksList');
+    const tasksPlaceholder = document.getElementById('tasksPlaceholder');
+    const taskCount = document.getElementById('taskCount');
+    const newTaskInput = document.getElementById('newTaskInput');
+    const deleteProjectBtn = document.getElementById('deleteProjectBtn');
+    const modalTitle = document.getElementById('modalTitle');
+
+    function populateLabelSelect(selectedId) {
+      projectLabelSelect.innerHTML = '';
+      labels.forEach(label => {
+        const opt = document.createElement('option');
+        opt.value = label.id;
+        opt.textContent = label.name;
+        if (label.id === selectedId) opt.selected = true;
+        projectLabelSelect.appendChild(opt);
+      });
+    }
+
+    function openNewProjectModal() {
+      isNewProject = true;
+      currentProjectId = `proj_${Date.now()}`;
+      modalTitle.textContent = 'Nou projecte';
+      projectTitleInput.value = '';
+      projectDescriptionInput.value = '';
+      populateLabelSelect(labels[0]?.id);
+      renderTasksInModal([]);
+      deleteProjectBtn.classList.add('hidden');
+      projectModal.classList.remove('hidden');
+      projectTitleInput.focus();
+    }
+
+    function openProjectModal(id) {
+      const project = projects.find(p => p.id === id);
+      if (!project) return;
+      isNewProject = false;
+      currentProjectId = id;
+      modalTitle.textContent = 'Detall del projecte';
+      projectTitleInput.value = project.title;
+      projectDescriptionInput.value = project.description;
+      populateLabelSelect(project.labelId || labels[0]?.id);
+      renderTasksInModal(project.tasks);
+      deleteProjectBtn.classList.remove('hidden');
+      projectModal.classList.remove('hidden');
+    }
+
+    function closeProjectModal() {
+      projectModal.classList.add('hidden');
+      currentProjectId = null;
+      isNewProject = false;
+      newTaskInput.value = '';
+    }
+
+    function renderTasksInModal(tasks) {
+      tasksList.innerHTML = '';
+      if (!tasks || tasks.length === 0) {
+        tasksPlaceholder.classList.remove('hidden');
+        taskCount.textContent = '0 tasques';
+        return;
+      }
+      tasksPlaceholder.classList.add('hidden');
+      taskCount.textContent = `${tasks.filter(t => t.done).length}/${tasks.length} tasques`;
+
+      tasks.forEach(task => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-2 bg-slate-800/80 rounded-lg px-2 py-1.5';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = task.done;
+        checkbox.className = 'h-3.5 w-3.5 rounded border-slate-500 bg-slate-900';
+        checkbox.addEventListener('change', () => toggleTaskDone(task.id));
+
+        const text = document.createElement('input');
+        text.type = 'text';
+        text.value = task.text;
+        text.className = 'flex-1 bg-transparent text-xs focus:outline-none';
+        text.addEventListener('change', () => editTaskText(task.id, text.value));
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'text-[11px] text-slate-400 hover:text-red-400';
+        delBtn.textContent = '✕';
+        delBtn.addEventListener('click', () => deleteTask(task.id));
+
+        row.appendChild(checkbox);
+        row.appendChild(text);
+        row.appendChild(delBtn);
+        tasksList.appendChild(row);
+      });
+    }
+
+    function getCurrentProject() {
+      return projects.find(p => p.id === currentProjectId);
+    }
+
+    function addTaskFromModal() {
+      const text = newTaskInput.value.trim();
+      if (!text || !currentProjectId) return;
+      let project = getCurrentProject();
+      if (!project) {
+        // Si és un projecte nou encara no guardat
+        project = {
+          id: currentProjectId,
+          title: projectTitleInput.value.trim() || 'Projecte sense títol',
+          description: projectDescriptionInput.value.trim(),
+          status: 'todo',
+          labelId: projectLabelSelect.value || labels[0]?.id,
+          tasks: []
+        };
+        projects.push(project);
+        isNewProject = false;
+      }
+      project.tasks.push({
+        id: `task_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+        text,
+        done: false
+      });
+      newTaskInput.value = '';
+      saveProjects();
+      renderTasksInModal(project.tasks);
+      renderBoard();
+    }
+
+    function toggleTaskDone(taskId) {
+      const project = getCurrentProject();
+      if (!project) return;
+      const task = project.tasks.find(t => t.id === taskId);
+      if (task) {
+        task.done = !task.done;
+        saveProjects();
+        renderTasksInModal(project.tasks);
+        renderBoard();
+      }
+    }
+
+    function editTaskText(taskId, newText) {
+      const project = getCurrentProject();
+      if (!project) return;
+      const task = project.tasks.find(t => t.id === taskId);
+      if (task) {
+        task.text = newText.trim();
+        saveProjects();
+        renderTasksInModal(project.tasks);
+      }
+    }
+
+    function deleteTask(taskId) {
+      const project = getCurrentProject();
+      if (!project) return;
+      project.tasks = project.tasks.filter(t => t.id !== taskId);
+      saveProjects();
+      renderTasksInModal(project.tasks);
+      renderBoard();
+    }
+
+    function saveProjectFromModal() {
+      if (!currentProjectId) return;
+      const title = projectTitleInput.value.trim() || 'Projecte sense títol';
+      const description = projectDescriptionInput.value.trim();
+      const labelId = projectLabelSelect.value || labels[0]?.id;
+
+      let project = projects.find(p => p.id === currentProjectId);
+      if (!project) {
+        project = {
+          id: currentProjectId,
+          title,
+          description,
+          status: 'todo',
+          labelId,
+          tasks: []
+        };
+        projects.push(project);
+      } else {
+        project.title = title;
+        project.description = description;
+        project.labelId = labelId;
+      }
+
+      saveProjects();
+      renderBoard();
+      closeProjectModal();
+    }
+
+    deleteProjectBtn.addEventListener('click', () => {
+      if (!currentProjectId) return;
+      if (!confirm('Segur que vols eliminar aquest projecte i totes les seves tasques?')) return;
+      projects = projects.filter(p => p.id !== currentProjectId);
+      saveProjects();
+      renderBoard();
+      closeProjectModal();
+    });
+
+    // --- Gestió d’etiquetes en nova finestra ---
+    function openLabelsWindow() {
+      const win = window.open('', 'labelsManager', 'width=420,height=520');
+      if (!win) return;
+
+      const labelsData = JSON.stringify(labels);
+
+      win.document.write(`
+        <!DOCTYPE html>
+        <html lang="ca">
+        <head>
+          <meta charset="UTF-8" />
+          <title>Gestiona etiquetes</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <style>
+            body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:#020617; color:#e5e7eb; margin:0; padding:16px; }
+            h1 { font-size:18px; margin-bottom:8px; }
+            .label-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; padding:6px 8px; border-radius:8px; background:#020617; border:1px solid #1f2937; }
+            .label-row span.badge { padding:2px 8px; border-radius:999px; font-size:11px; }
+            input[type="text"] { background:#020617; border:1px solid #374151; border-radius:6px; padding:4px 6px; color:#e5e7eb; font-size:12px; width:100%; }
+            select { background:#020617; border:1px solid #374151; border-radius:6px; padding:4px 6px; color:#e5e7eb; font-size:12px; width:100%; }
+            button { border-radius:6px; border:none; padding:4px 8px; font-size:11px; cursor:pointer; }
+            button.primary { background:#4f46e5; color:white; }
+            button.danger { background:#b91c1c; color:white; }
+            button.outline { background:transparent; border:1px solid #4b5563; color:#e5e7eb; }
+            small { color:#9ca3af; font-size:11px; }
+          </style>
+        </head>
+        <body>
+          <h1>Gestiona etiquetes</h1>
+          <small>Canvia els noms i colors de les etiquetes. En tancar aquesta finestra, actualitza el tauler.</small>
+          <div id="labelsContainer" style="margin-top:12px; margin-bottom:12px;"></div>
+          <hr style="border-color:#1f2937; margin:12px 0;" />
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <strong style="font-size:12px;">Nova etiqueta</strong>
+            <input id="newLabelName" type="text" placeholder="Nom de l'etiqueta" />
+            <select id="newLabelColor">
+              <option value="bg-slate-700 text-slate-100">Gris</option>
+              <option value="bg-indigo-600 text-white">Blau</option>
+              <option value="bg-emerald-600 text-white">Verd</option>
+              <option value="bg-rose-600 text-white">Rosa</option>
+              <option value="bg-amber-500 text-slate-900">Groc</option>
+            </select>
+            <button class="primary" onclick="addLabel()">Afegir etiqueta</button>
+          </div>
+          <script>
+            let labels = ${labelsData};
+
+            function renderLabels() {
+              const container = document.getElementById('labelsContainer');
+              container.innerHTML = '';
+              if (!labels.length) {
+                container.innerHTML = '<small>No hi ha etiquetes. Afegeix-ne una nova.</small>';
+                return;
+              }
+              labels.forEach((label, index) => {
+                const row = document.createElement('div');
+                row.className = 'label-row';
+
+                const badge = document.createElement('span');
+                badge.className = 'badge';
+                badge.textContent = label.name;
+                badge.style.background = '#1f2937';
+                badge.style.color = '#e5e7eb';
+
+                const nameInput = document.createElement('input');
+                nameInput.type = 'text';
+                nameInput.value = label.name;
+                nameInput.onchange = () => { label.name = nameInput.value.trim() || 'Etiqueta'; saveLabels(); renderLabels(); };
+
+                const colorSelect = document.createElement('select');
+                const options = [
+                  { value: 'bg-slate-700 text-slate-100', label: 'Gris' },
+                  { value: 'bg-indigo-600 text-white', label: 'Blau' },
+                  { value: 'bg-emerald-600 text-white', label: 'Verd' },
+                  { value: 'bg-rose-600 text-white', label: 'Rosa' },
+                  { value: 'bg-amber-500 text-slate-900', label: 'Groc' }
+                ];
+                options.forEach(opt => {
+                  const o = document.createElement('option');
+                  o.value = opt.value;
+                  o.textContent = opt.label;
+                  if (opt.value === label.colorClass) o.selected = true;
+                  colorSelect.appendChild(o);
+                });
+                colorSelect.onchange = () => { label.colorClass = colorSelect.value; saveLabels(); };
+
+                const delBtn = document.createElement('button');
+                delBtn.className = 'danger';
+                delBtn.textContent = 'Eliminar';
+                delBtn.onclick = () => { if (confirm('Eliminar aquesta etiqueta?')) { labels.splice(index, 1); saveLabels(); renderLabels(); } };
+
+                row.appendChild(badge);
+                row.appendChild(nameInput);
+                row.appendChild(colorSelect);
+                row.appendChild(delBtn);
+                container.appendChild(row);
+              });
+            }
+
+            function saveLabels() {
+              localStorage.setItem('${STORAGE_KEY_LABELS}', JSON.stringify(labels));
+            }
+
+            function addLabel() {
+              const nameInput = document.getElementById('newLabelName');
+              const colorSelect = document.getElementById('newLabelColor');
+              const name = nameInput.value.trim();
+              if (!name) return;
+              labels.push({
+                id: 'label_' + Date.now(),
+                name,
+                colorClass: colorSelect.value
+              });
+              nameInput.value = '';
+              saveLabels();
+              renderLabels();
+            }
+
+            renderLabels();
+          <\/script>
+        </body>
+        </html>
+      `);
+      win.document.close();
+    }
+    // Quan la finestra d'etiquetes es tanqui, recarreguem etiquetes i tornem a pintar el tauler
+window.addEventListener('focus', () => {
+  const updatedLabels = localStorage.getItem(STORAGE_KEY_LABELS);
+  if (updatedLabels) {
+    labels = JSON.parse(updatedLabels);
+    renderBoard();
+  }
+});
+
+    // --- Esdeveniments generals ---
+    document.getElementById('addProjectBtn').addEventListener('click', openNewProjectModal);
+    document.getElementById('manageLabelsBtn').addEventListener('click', openLabelsWindow);
+
+    // Tancar modal amb ESC
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !projectModal.classList.contains('hidden')) {
+        closeProjectModal();
+      }
+    });
+
+    // Inicialització
+    loadData();
+    renderBoard();
+  </script>
+</body>
+</html>
